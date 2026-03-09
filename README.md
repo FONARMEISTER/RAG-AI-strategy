@@ -7,16 +7,16 @@
 - **Извлечение текста из PDF**: Автоматическая обработка документа стратегии
 - **Семантический поиск**: Использование multilingual-e5-large для создания эмбеддингов
 - **Векторное хранилище**: FAISS для быстрого поиска релевантных фрагментов
-- **Генерация ответов**: ruT5-Large (Hugging Face) - специализированная модель для русского языка
+- **Генерация ответов**: Qwen2.5-1.5B-Instruct - компактная инструкционная модель с поддержкой русского языка
 - **Локальная работа**: Все модели работают локально, не требуется API ключ
-- **Защита от prompt injection**: Встроенные механизмы защиты от манипуляций
+- **Большой контекст**: 32k токенов для обработки длинных фрагментов
 
 ## 📋 Требования
 
 - Python 3.8+
 - 8GB+ RAM (рекомендуется 16GB)
 - GPU (опционально, но рекомендуется для быстрой работы)
-- ~3GB свободного места для моделей
+- ~5GB свободного места для моделей
 
 ## 🚀 Установка
 
@@ -42,7 +42,7 @@ python quick_start.py
 python interactive_rag.py
 ```
 
-⚠️ **Первый запуск**: Система автоматически загрузит модели (~2-3GB). Это займет несколько минут.
+⚠️ **Первый запуск**: Система автоматически загрузит модели (~5GB). Это займет несколько минут.
 
 Примеры вопросов:
 - Какие федеральные законы составляют правовую основу Стратегии?
@@ -64,20 +64,16 @@ python test_rag.py
 ```python
 from rag_system import RAGSystem
 
-# Инициализация системы
+# Инициализация системы (автоматически загружает индекс если существует)
 rag = RAGSystem(
     pdf_path="data/strategy.pdf",
-    chunk_size=600,
-    chunk_overlap=100,
-    llm_model="google/flan-t5-large"
+    index_path="data/faiss_index",
+    auto_load=True
 )
 
-# Построение индекса (первый запуск)
-rag.build_index()
-rag.save_index()
-
-# Или загрузка существующего индекса
-# rag.load_index()
+# Построение индекса (только при первом запуске)
+if rag.index is None:
+    rag.build_index(save_after_build=True)
 
 # Задать вопрос
 result = rag.answer_question(
@@ -92,32 +88,33 @@ print(result['answer'])
 
 ### Компоненты системы
 
-1. **PDF Extraction** ([`rag_system.py`](rag_system.py:76-82))
+1. **PDF Extraction** ([`rag_system.py`](rag_system.py:87-94))
    - Извлечение текста из PDF с помощью PyPDF2
    - Очистка и нормализация текста
 
-2. **Text Chunking** ([`rag_system.py`](rag_system.py:84-136))
-   - Разбиение на чанки размером ~600 символов
-   - Перекрытие 100 символов для сохранения контекста
-   - Учет границ параграфов
+2. **Text Chunking** ([`rag_system.py`](rag_system.py:104-148))
+   - Разбиение на чанки размером ~800 символов
+   - Перекрытие 200 символов для сохранения контекста
+   - Использование RecursiveCharacterTextSplitter для умного разбиения
 
-3. **Embeddings** ([`rag_system.py`](rag_system.py:138-151))
+3. **Embeddings** ([`rag_system.py`](rag_system.py:150-175))
    - Модель: `intfloat/multilingual-e5-large`
    - Поддержка русского языка
    - Нормализованные векторы
 
-4. **Vector Store** ([`rag_system.py`](rag_system.py:153-168))
-   - FAISS IndexFlatIP для быстрого поиска
+4. **Vector Store** ([`rag_system.py`](rag_system.py:177-210))
+   - FAISS IndexFlatL2 для быстрого поиска
    - Сохранение/загрузка индекса
 
-5. **Retrieval** ([`rag_system.py`](rag_system.py:170-193))
+5. **Retrieval** ([`rag_system.py`](rag_system.py:212-253))
    - Семантический поиск top-k фрагментов
-   - Ранжирование по релевантности
+   - Ранжирование по релевантности (L2 distance)
 
-6. **Generation** ([`rag_system.py`](rag_system.py:195-232))
-   - Google FLAN-T5-Large для генерации ответов
-   - Температура 0.1 для точности
-   - Защита от prompt injection
+6. **Generation** ([`rag_system.py`](rag_system.py:255-321))
+   - Qwen2.5-1.5B-Instruct для генерации ответов
+   - Температура 0.7 для баланса точности и креативности
+   - Nucleus sampling (top_p=0.9)
+   - Repetition penalty для избежания повторов
 
 ## 🤖 Используемые модели
 
@@ -127,29 +124,45 @@ print(result['answer'])
 - **Особенности**: Отличная поддержка русского языка, высокое качество эмбеддингов
 
 ### Text Generation
-- **Модель**: `google/flan-t5-large`
+- **Модель**: `Qwen/Qwen2.5-1.5B-Instruct`
 - **Размер**: ~3GB
-- **Особенности**: Instruction-following модель, хорошо работает с русским языком
+- **Особенности**: 
+  - Компактная модель (1.5B параметров)
+  - Контекст 32k токенов (vs 512 у T5)
+  - Отличная поддержка русского языка
+  - Instruction-following архитектура
+  - Генерирует полные, связные ответы без обрезания
+
+### Параметры генерации
+
+```python
+max_new_tokens=512        # Максимум новых токенов (~300-400 слов)
+do_sample=True            # Включить вероятностную выборку
+temperature=0.7           # Баланс между точностью и креативностью
+top_p=0.9                 # Nucleus sampling (топ 90% вероятности)
+repetition_penalty=1.1    # Штраф за повторы
+```
 
 ### Альтернативные модели
 
-Вы можете использовать другие модели, изменив параметр `llm_model`:
+Вы можете изменить модель в [`rag_system.py:37`](rag_system.py:37):
 
 ```python
 # Для более быстрой работы (меньше качество)
-rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="google/flan-t5-base")
+self.llm_model = "Qwen/Qwen2.5-0.5B-Instruct"  # 0.5B параметров
 
 # Для лучшего качества (требует больше ресурсов)
-rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="google/flan-t5-xl")
+self.llm_model = "Qwen/Qwen2.5-3B-Instruct"    # 3B параметров
 
-# Русскоязычная модель
-rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="ai-forever/ruT5-large")
+# Другие варианты
+self.llm_model = "mistralai/Mistral-7B-Instruct-v0.2"  # 7B, очень качественно
 ```
 
 ## 🔒 Безопасность
 
-Система включает защиту от prompt injection:
+Система включает защиту от prompt injection в системном промпте ([`rag_system.py:277-287`](rag_system.py:277)):
 - Четкие инструкции модели отвечать только на основе контекста
+- Запрет на выдумывание информации
 - Игнорирование манипулятивных инструкций в вопросах
 - Проверка на попытки обхода ограничений
 
@@ -164,7 +177,6 @@ rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="ai-forever/ruT5-large")
 ├── rag_system.py             # Основной класс RAG системы
 ├── interactive_rag.py        # Интерактивный интерфейс
 ├── test_rag.py              # Скрипт тестирования
-├── quick_start.py           # Проверка установки
 ├── requirements.txt          # Зависимости
 └── README.md                # Документация
 ```
@@ -177,6 +189,7 @@ rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="ai-forever/ruT5-large")
 - **PyPDF2**: Извлечение текста из PDF
 - **PyTorch**: Backend для моделей
 - **Pandas**: Обработка данных
+- **LangChain**: Text splitting utilities
 
 ## ⚡ Оптимизация производительности
 
@@ -187,43 +200,47 @@ rag = RAGSystem(pdf_path="data/strategy.pdf", llm_model="ai-forever/ruT5-large")
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
+Система автоматически:
+- Использует float16 на GPU для экономии памяти
+- Применяет device_map="auto" для оптимального размещения модели
+- Загружает модели на GPU если доступен
+
 ### CPU оптимизация
-Для работы на CPU система автоматически использует оптимизации:
-- Квантизация моделей
-- Batch processing для эмбеддингов
-- Кэширование результатов
+Для работы на CPU система автоматически:
+- Использует float32 для стабильности
+- Применяет batch processing для эмбеддингов
+- Кэширует индекс для быстрой загрузки
 
 ## 📝 Примечания
 
-- При первом запуске система загрузит модели (~2-3GB)
+- При первом запуске система загрузит модели (~5GB)
 - Индекс сохраняется в `data/faiss_index.*` для быстрой загрузки
 - На CPU генерация ответа занимает 10-30 секунд
 - На GPU генерация ответа занимает 2-5 секунд
-- Рекомендуется минимум 8GB RAM
-
-## 🤝 Вклад
-
-Проект создан для выполнения задания по RAG-системам. Можно использовать любые подходы:
-- ✅ Написание с нуля на Python
-- ✅ Использование Langchain
-- ✅ No-code инструменты (n8n и др.)
+- Рекомендуется минимум 8GB RAM (16GB для комфортной работы)
 
 ## 🔧 Решение проблем
 
 ### Ошибка "Out of Memory"
-- Используйте меньшую модель: `google/flan-t5-base`
+- Используйте меньшую модель: `Qwen/Qwen2.5-0.5B-Instruct`
 - Уменьшите `top_k` при поиске
 - Закройте другие приложения
+- На GPU используется float16 автоматически
 
 ### Медленная работа
 - Используйте GPU если доступен
 - Уменьшите размер модели
-- Используйте квантизованные версии моделей
+- Уменьшите `max_new_tokens` в генерации
 
 ### Ошибки при загрузке моделей
 - Проверьте интернет соединение
-- Убедитесь что достаточно места на диске
+- Убедитесь что достаточно места на диске (~5GB)
 - Попробуйте очистить кэш: `rm -rf ~/.cache/huggingface/`
+
+### Обрезанные ответы
+- ✅ **Исправлено**: Используется Qwen2.5 вместо QA-модели
+- Модель генерирует полные ответы до 512 токенов
+- Контекст 32k токенов позволяет обрабатывать длинные фрагменты
 
 ## 📄 Лицензия
 
@@ -232,6 +249,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ## 🔗 Полезные ссылки
 
 - [Hugging Face Models](https://huggingface.co/models)
+- [Qwen2.5 Models](https://huggingface.co/Qwen)
 - [Sentence Transformers](https://www.sbert.net/)
 - [FAISS](https://github.com/facebookresearch/faiss)
-- [ruT5 Model](https://huggingface.co/ai-forever/ruT5-large)
+- [LangChain](https://python.langchain.com/)
